@@ -1,8 +1,32 @@
 //! thingblock-link binary entry point — a thin wrapper over the crate library
-//! (see `lib.rs`). Sets up logging and, once milestones land, wires the tokio
-//! runtime (daemon manager + WS server) to the tray's event loop.
+//! (see `lib.rs`). Starts the arduino-cli daemon manager and the WS server.
 
-fn main() {
+use std::net::Ipv4Addr;
+use std::sync::Arc;
+
+use clap::Parser;
+use thingblock_link::daemon::Daemon;
+use thingblock_link::error::Result;
+use thingblock_link::ws;
+use tokio::net::TcpListener;
+
+/// WS port the editor connects to. A contract detail with the editor; override
+/// with `--port` until the two sides are pinned together.
+const DEFAULT_WS_PORT: u16 = 3030;
+
+#[derive(Parser)]
+#[command(
+    name = "thingblock-link",
+    about = "Local arduino-cli helper for the scratch-editor"
+)]
+struct Args {
+    /// TCP port for the WebSocket server (bound on localhost).
+    #[arg(long, default_value_t = DEFAULT_WS_PORT)]
+    port: u16,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -11,12 +35,15 @@ fn main() {
         .init();
 
     tracing::info!("thingblock-link starting");
+    let args = Args::parse();
 
-    // M0 wiring (see design doc milestones):
-    //   1. Build a tokio runtime; spawn the arduino-cli daemon manager
-    //      (`daemon::Daemon::start`) and the WS server (`ws::server::serve`).
-    //   2. Run the tao event loop on this (main) thread via `tray::run` to drive
-    //      the tray icon, surfacing status and a Quit action.
-    //   3. Bridge status/control between the tokio side and the tray over a
-    //      channel.
+    // Spawn and own the arduino-cli daemon, then serve the editor over WS.
+    let daemon = Arc::new(Daemon::start().await?);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)).await?;
+    ws::server::serve(listener, daemon).await?;
+
+    // Tray UI (tray.rs) is deferred: once implemented, the tao event loop must
+    // own the main thread, so this will be restructured to run the daemon + WS
+    // server on a tokio runtime spawned from `main` while the tray drives here.
+    Ok(())
 }

@@ -7,6 +7,9 @@ edition = "2024"
 protox = "0.9"
 tonic-prost-build = "0.14"
 
+[dev-dependencies]
+tokio-tungstenite = "0.29"
+
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
 clap = { version = "4", features = ["derive"] }

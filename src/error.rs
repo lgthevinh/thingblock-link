@@ -30,3 +30,16 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
+
+impl Error {
+    /// Stable wire code for the WS `error {code, message}` terminal message.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Error::InvalidRequest(_) => "invalidRequest",
+            Error::Daemon(_) => "daemon",
+            Error::Grpc(_) => "grpc",
+            Error::Cancelled => "cancelled",
+            Error::Io(_) => "io",
+        }
+    }
+}
