@@ -6,9 +6,10 @@ fn main() {
 
 /// Compile the vendored arduino-cli protos when present.
 ///
-/// The protos are vendored at the gRPC milestone (see the design doc). Until
-/// then `proto/` holds no `.proto` files and codegen is skipped so the crate
-/// still builds.
+/// Uses `protox` (a pure-Rust proto compiler) so the build needs no system
+/// `protoc`; it also bundles the `google/protobuf/*` well-known types. The
+/// resulting descriptor set is handed to tonic's `compile_fds`. If `proto/`
+/// holds no `.proto` files, codegen is skipped so the crate still builds.
 fn compile_protos() {
     println!("cargo:rerun-if-changed=proto");
 
@@ -22,10 +23,13 @@ fn compile_protos() {
         return;
     }
 
+    let fds = protox::compile(&protos, [proto_root]).expect("protox: compile arduino-cli protos");
+
     tonic_prost_build::configure()
         .build_server(false) // the helper is a gRPC client only
-        .compile_protos(&protos, &[proto_root.to_path_buf()])
-        .expect("failed to compile arduino-cli protos");
+        .include_file("mod.rs") // one nested module tree for every proto package
+        .compile_fds(fds)
+        .expect("tonic: generate arduino-cli client");
 }
 
 fn collect_protos(dir: &Path) -> Vec<PathBuf> {
