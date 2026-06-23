@@ -156,4 +156,5 @@ Stack: `tokio`, `tonic` / `prost`, `axum`, `serde`, `tracing`, `clap`,
 
 ## License
 
-See repository for license details.
+Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See
+[`LICENSE`](LICENSE) for the full text.
