@@ -7,10 +7,13 @@
 //! `cc.arduino.cli.commands.v1` package.
 //!
 //! Per-RPC helper methods (`board_list`, `compile`, …) that translate to the
-//! helper's shapes land on [`Client`] in their own milestones; the arduino-cli
-//! schema never leaks past this module.
+//! helper's shapes land on [`Client`] via one submodule per RPC (each a separate
+//! `impl Client` block, e.g. [`board`]); the arduino-cli schema never leaks past
+//! this module.
 
 use tonic::transport::Channel;
+
+pub mod board;
 
 /// The tonic-generated code, mirroring the proto package hierarchy. Lints are
 /// silenced here — this is machine-generated and not ours to clean up.

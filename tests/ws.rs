@@ -1,7 +1,8 @@
 //! End-to-end check of the WS pipe: accept → upgrade → parse envelope →
-//! dispatch → serialize → `id` correlation, with a live daemon behind it. The
-//! M0 dispatch returns `error{unimplemented}` for every request type; this test
-//! verifies the whole round-trip, not the (later) RPC logic.
+//! dispatch → serialize → `id` correlation, with a live daemon behind it. Drives
+//! the real `listBoards` (M1) arm with an empty pnpid filter, which yields no
+//! targets on a board-less host — exercising the whole round-trip through a live
+//! `BoardList` RPC.
 
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 #[tokio::test]
-async fn ws_round_trip_returns_unimplemented_error() {
+async fn ws_round_trip_list_boards_returns_result() {
     let daemon = Arc::new(Daemon::start().await.expect("daemon should start"));
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -49,6 +50,7 @@ async fn ws_round_trip_returns_unimplemented_error() {
 
     let json: serde_json::Value = serde_json::from_str(reply.as_str()).expect("parse reply");
     assert_eq!(json["id"], "42", "terminal reply must carry the request id");
-    assert_eq!(json["type"], "error");
-    assert_eq!(json["payload"]["code"], "unimplemented");
+    assert_eq!(json["type"], "result");
+    // Empty pnpid filter matches nothing, so no targets on any host.
+    assert_eq!(json["payload"]["targets"], serde_json::json!([]));
 }

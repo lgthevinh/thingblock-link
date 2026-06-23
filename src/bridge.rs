@@ -12,7 +12,7 @@ use tracing::warn;
 
 use crate::daemon::Daemon;
 use crate::error::Result;
-use crate::ws::protocol::{RequestBody, Response, ResponseBody};
+use crate::ws::protocol::{ListBoardsResult, RequestBody, Response, ResponseBody};
 
 /// Sends responses for one request back to the session's writer task, stamping
 /// each with the request `id`. Cloneable/`&`-shareable so a streaming handler can
@@ -46,13 +46,9 @@ impl Responder {
 ///
 /// Returns `Err` only for failures the session should turn into a terminal
 /// `error`; handlers that own their own terminal reply return `Ok`.
-pub async fn dispatch(
-    body: RequestBody,
-    responder: &Responder,
-    _daemon: Arc<Daemon>,
-) -> Result<()> {
-    // M1+ replaces these arms with real `ArduinoCoreService` translations; the
-    // daemon handle is threaded through ready for that work.
+pub async fn dispatch(body: RequestBody, responder: &Responder, daemon: Arc<Daemon>) -> Result<()> {
+    // Remaining arms land their real `ArduinoCoreService` translations in later
+    // milestones; until then they report themselves unimplemented.
     let unimplemented = |what: &str| {
         responder.send(ResponseBody::Error {
             code: "unimplemented".into(),
@@ -61,7 +57,15 @@ pub async fn dispatch(
     };
 
     match body {
-        RequestBody::ListBoards { .. } => unimplemented("listBoards").await,
+        RequestBody::ListBoards { pnpid } => {
+            let targets = daemon.client().board_list(&pnpid).await?;
+            responder
+                .send(ResponseBody::Result(
+                    serde_json::to_value(ListBoardsResult { targets })
+                        .expect("ListBoardsResult always serializes"),
+                ))
+                .await;
+        }
         RequestBody::Connect { .. } => unimplemented("connect").await,
         RequestBody::Disconnect {} => unimplemented("disconnect").await,
         RequestBody::Compile { .. } => unimplemented("compile").await,
