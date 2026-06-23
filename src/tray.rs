@@ -90,6 +90,7 @@ pub fn run(runtime: Runtime, port: u16) -> ! {
                 if let Some(tray) = &tray {
                     tray.status_item.set_text(status.label());
                     let _ = tray._icon.set_tooltip(Some(status.tooltip()));
+                    let _ = tray._icon.set_icon(Some(icon_for(&status)));
                 }
             }
             Event::UserEvent(UserEvent::MenuClick(id))
@@ -153,7 +154,7 @@ fn build_tray() -> Tray {
     let icon = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip(Status::Starting.tooltip())
-        .with_icon(make_icon())
+        .with_icon(icon_for(&Status::Starting))
         .build()
         .expect("build tray icon");
 
@@ -164,11 +165,49 @@ fn build_tray() -> Tray {
     }
 }
 
-/// A plain 32×32 solid-color icon, generated in code so the preview needs no
-/// bundled asset. Swap in the real logo (decoded via `image`) before release.
-fn make_icon() -> Icon {
-    const SIZE: u32 = 32;
-    const RGBA: [u8; 4] = [0x2d, 0xd4, 0xbf, 0xff]; // teal
-    let rgba = RGBA.repeat((SIZE * SIZE) as usize);
-    Icon::from_rgba(rgba, SIZE, SIZE).expect("build tray icon image")
+/// The ThingBlock chip glyph as raw RGBA, decoded from the brand PNG embedded at
+/// compile time so the binary stays self-contained. `icon-32.png` is the brand's
+/// safe cross-platform default (see `brand/DESIGN.md`); this is the base the
+/// per-status [`icon_for`] variants are derived from.
+fn glyph_rgba() -> image::RgbaImage {
+    const PNG: &[u8] = include_bytes!("../brand/icons/icon-32.png");
+    image::load_from_memory(PNG)
+        .expect("decode embedded tray icon png")
+        .into_rgba8()
+}
+
+/// The tray icon for a given status — a glanceable supplement to the menu status
+/// line, not a replacement (see `brand/DESIGN.md`):
+/// - `Running` → the full-color glyph, as shipped.
+/// - `Starting` → dimmed to 60% opacity.
+/// - `Failed` → the editor's error red as a dot in the pin-1 corner (top-left).
+fn icon_for(status: &Status) -> Icon {
+    let mut image = glyph_rgba();
+    match status {
+        Status::Running(_) => {}
+        Status::Starting => {
+            for pixel in image.pixels_mut() {
+                pixel[3] = (f32::from(pixel[3]) * 0.6) as u8;
+            }
+        }
+        Status::Failed(_) => overlay_error_dot(&mut image),
+    }
+    let (width, height) = image.dimensions();
+    Icon::from_rgba(image.into_raw(), width, height).expect("build tray icon image")
+}
+
+/// Paint the editor's error red (`#FF661A`) as a filled dot over the pin-1 corner,
+/// the `Failed`-state cue from `brand/DESIGN.md`.
+fn overlay_error_dot(image: &mut image::RgbaImage) {
+    const RED: image::Rgba<u8> = image::Rgba([0xFF, 0x66, 0x1A, 0xFF]);
+    const CENTER: i32 = 6;
+    const RADIUS: i32 = 5;
+    for y in 0..image.height() as i32 {
+        for x in 0..image.width() as i32 {
+            let (dx, dy) = (x - CENTER, y - CENTER);
+            if dx * dx + dy * dy <= RADIUS * RADIUS {
+                image.put_pixel(x as u32, y as u32, RED);
+            }
+        }
+    }
 }

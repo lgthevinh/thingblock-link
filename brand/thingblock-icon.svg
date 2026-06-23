@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ThingBlock">
+  <defs>
+    <linearGradient id="tb-icon-orange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFD166"/>
+      <stop offset="100%" stop-color="#FF7B35"/>
+    </linearGradient>
+    <linearGradient id="tb-icon-lime" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#D9F99D"/>
+      <stop offset="100%" stop-color="#84CC16"/>
+    </linearGradient>
+    <filter id="tb-icon-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0.6" dy="1.4" stdDeviation="0.5" flood-color="#0D2800" flood-opacity="0.75"/>
+    </filter>
+    <clipPath id="tb-icon-body">
+      <rect x="7" y="8" width="18" height="16" rx="3"/>
+    </clipPath>
+  </defs>
+  <g filter="url(#tb-icon-shadow)">
+    <!-- pins -->
+    <g fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.5">
+      <rect x="9"  y="4.5" width="3" height="4" rx="1"/>
+      <rect x="14.5" y="4.5" width="3" height="4" rx="1"/>
+      <rect x="20" y="4.5" width="3" height="4" rx="1"/>
+      <rect x="9"  y="23.5" width="3" height="4" rx="1"/>
+      <rect x="14.5" y="23.5" width="3" height="4" rx="1"/>
+      <rect x="20" y="23.5" width="3" height="4" rx="1"/>
+    </g>
+    <!-- chip body: diagonal orange (top) -> lime (bottom) split -->
+    <g clip-path="url(#tb-icon-body)">
+      <rect x="7" y="8" width="18" height="16" fill="url(#tb-icon-orange)"/>
+      <polygon points="7,15 25,18 25,24 7,24" fill="url(#tb-icon-lime)"/>
+    </g>
+    <rect x="7" y="8" width="18" height="16" rx="3" fill="none" stroke="#FFFFFF" stroke-width="2" paint-order="stroke"/>
+    <!-- pin-1 indicator -->
+    <circle cx="10.5" cy="11.5" r="1.3" fill="#FFFFFF"/>
+  </g>
+</svg>
