@@ -23,8 +23,8 @@ self-contained process for the user to run.
 
 ## Status
 
-The WS pipe and the daemon handshake are in place. Of the protocol below, only
-**`listBoards`** is implemented today; the other request types return
+The WS pipe and the daemon handshake are in place, along with `listBoards`,
+`connect`, and `disconnect`. The remaining request types return
 `error {code: "unimplemented"}` until their milestone lands (compile → upload →
 monitor). Each row in the [reference](#websocket-protocol-reference) is tagged with
 its status.
@@ -77,8 +77,8 @@ reply (`result` or `error`). Field names are camelCase. Unsolicited helper messa
 | `type` | `payload` | terminal reply | status |
 | - | - | - | - |
 | `listBoards` | `{ pnpid: string[] }` | `result { targets: ConnectionTarget[] }` | ✅ implemented |
-| `connect` | `{ port: string }` | `result {}` | ☐ unimplemented |
-| `disconnect` | `{}` | `result {}` | ☐ unimplemented |
+| `connect` | `{ port: string }` | `result {}` | ✅ implemented |
+| `disconnect` | `{}` | `result {}` | ✅ implemented |
 | `compile` | `{ fqbn, options, source }` | `result { artifact }` (after `log`/`progress`) | ☐ unimplemented |
 | `upload` | `{ fqbn, port, uploadSpeed, artifact }` | `result {}` (after `progress`) | ☐ unimplemented |
 | `monitorOpen` | `{ port, baudRate }` | `result {}` then async `monitorData` | ☐ unimplemented |
@@ -132,6 +132,17 @@ the port label, then its address.
 ```json
 { "id": "1", "type": "result", "payload": { "targets": [ { "port": "/dev/ttyACM0", "label": "Arduino Uno" } ] } }
 ```
+
+### `connect` / `disconnect`
+
+The arduino-cli daemon is connectionless per-port (the port is passed into each
+compile/upload/monitor call; there is no "open a board" RPC), so `connect` is a
+**helper-side session concept**. `connect {port}` is a lightweight store — it
+checks the port is non-empty (`error{invalidRequest}` otherwise), records it as the
+session's selected port, and replies `result {}`; it does **not** round-trip to the
+daemon, so actual port existence surfaces later at upload/monitor time.
+`disconnect {}` clears the selected port (and, once `monitor` lands, closes any open
+monitor stream) and replies `result {}`.
 
 ## Architecture
 

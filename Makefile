@@ -13,6 +13,10 @@
 CARGO ?= cargo
 CARGO_XWIN ?= cargo xwin
 
+# Log filter for `make dev`/`make run`. Covers the helper and the forwarded
+# arduino-cli daemon output. Override: `make dev RUST_LOG=thingblock_link=trace`.
+RUST_LOG ?= thingblock_link=debug,arduino_cli_daemon=debug
+
 # Release target triples, keyed to the bundled arduino-cli dirs.
 TARGET_LINUX   := x86_64-unknown-linux-gnu
 TARGET_MACOS   := aarch64-apple-darwin
@@ -27,8 +31,8 @@ help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-dev run: ## Run the helper locally (debug)
-	$(CARGO) run
+dev run: ## Run the helper locally (debug build + debug logs)
+	RUST_LOG=$(RUST_LOG) $(CARGO) run
 
 build: ## Native release build
 	$(CARGO) build --release
