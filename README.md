@@ -44,6 +44,18 @@ cargo fmt --check
 The bundled `arduino-cli` binaries live under `arduino-cli-binaries/`; integration
 tests (`tests/daemon.rs`, `tests/ws.rs`) spawn the real daemon and are offline-safe.
 
+**Linux build prerequisite.** The status window renders through `wry`, which builds
+against the system WebView (WebKitGTK). Install its dev headers before building:
+
+```sh
+# Fedora
+sudo dnf install webkit2gtk4.1-devel
+# Debian/Ubuntu
+sudo apt install libwebkit2gtk-4.1-dev
+```
+
+macOS (WKWebView) and Windows (WebView2) need no extra system package.
+
 ## Run
 
 ```sh
@@ -52,7 +64,10 @@ cargo run -- --port 3030                 # WS server on ws://localhost:3030/
 
 `--port` defaults to `3030`. The process starts the arduino-cli daemon on an
 OS-assigned loopback port, serves the WebSocket, and renders a tray icon
-(`Starting…` → `Running on :PORT`, plus Quit). Quit reaps the daemon.
+(`Starting…` → `Running on :PORT`, plus **Show Status** and Quit). **Show Status**
+opens a small WebView window with the live helper status, the arduino-cli daemon's
+health, and the connected-board count; closing it just hides it (the helper keeps
+running). Quit reaps the daemon.
 
 Set `RUST_LOG` (e.g. `RUST_LOG=thingblock_link=debug`) to adjust log verbosity.
 
@@ -158,12 +173,14 @@ src/
     protocol.rs    serde structs for the JSON envelope (the cross-repo contract)
   bridge.rs      envelope <-> gRPC translation; the only place the two schemas meet
   tray.rs        tray-icon status/quit UI + main-thread tao event loop
+  window.rs      wry WebView status window (opened from the tray)
   error.rs
+assets/          status.html — the status window's markup/CSS/JS
 tests/           integration tests (no inline #[cfg(test)] in src/)
 ```
 
 Stack: `tokio`, `tonic` / `prost`, `axum`, `serde`, `tracing`, `clap`,
-`tao` / `tray-icon`.
+`tao` / `tray-icon` / `wry`.
 
 ## License
 

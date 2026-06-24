@@ -28,3 +28,4 @@ tonic-prost = "0.14"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tray-icon = "0.24"
+wry = "0.55"
