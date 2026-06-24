@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use thingblock_link::grpc::board::detected_ports_to_targets;
+use thingblock_link::grpc::board::{count_board_ports, detected_ports_to_targets};
 use thingblock_link::grpc::cli::{BoardListItem, DetectedPort, Port};
 
 /// An Uno-shaped serial port: VID 2341 / PID 0043, with a matching board.
@@ -89,4 +89,30 @@ fn empty_pnpid_filter_matches_nothing() {
     let targets = detected_ports_to_targets(&[uno_port()], &[]);
 
     assert!(targets.is_empty());
+}
+
+/// A port with no USB vid/pid (e.g. a network port) — not a board.
+fn network_port() -> DetectedPort {
+    DetectedPort {
+        matching_boards: vec![],
+        port: Some(Port {
+            address: "192.168.1.5".into(),
+            label: "net".into(),
+            ..Default::default()
+        }),
+    }
+}
+
+#[test]
+fn board_count_includes_only_usb_ports() {
+    // Two USB boards + one network port → 2 (the count is unfiltered by pnpid,
+    // unlike the listBoards path, but still excludes non-USB serial devices).
+    let ports = [uno_port(), uno_port(), network_port()];
+    assert_eq!(count_board_ports(&ports), 2);
+}
+
+#[test]
+fn board_count_is_zero_without_usb_ports() {
+    assert_eq!(count_board_ports(&[network_port()]), 0);
+    assert_eq!(count_board_ports(&[]), 0);
 }

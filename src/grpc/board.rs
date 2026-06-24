@@ -39,6 +39,35 @@ impl Client {
 
         Ok(detected_ports_to_targets(&resp.ports, pnpid))
     }
+
+    /// Count connected USB boards via `BoardList` — every detected port that
+    /// carries a USB vid/pid (so generic serial devices without one aren't
+    /// counted). Backs the status window's "boards connected" line; doubles as a
+    /// daemon liveness probe (an `Err` means the daemon is unresponsive).
+    pub async fn connected_board_count(&mut self) -> Result<usize> {
+        let instance = *self.instance();
+        let resp = self
+            .inner()
+            .board_list(cli::BoardListRequest {
+                instance: Some(instance),
+                timeout: BOARD_LIST_TIMEOUT_MS,
+                fqbn: String::new(),
+                skip_cloud_api_for_board_detection: true,
+            })
+            .await?
+            .into_inner();
+
+        Ok(count_board_ports(&resp.ports))
+    }
+}
+
+/// Count detected ports that look like USB boards (have a reconstructable USB
+/// pnpid). Pure (no I/O) so it is unit-testable without hardware.
+pub fn count_board_ports(ports: &[cli::DetectedPort]) -> usize {
+    ports
+        .iter()
+        .filter(|detected| detected.port.as_ref().and_then(port_pnp_id).is_some())
+        .count()
 }
 
 /// Map detected ports to `ConnectionTarget`s, keeping only those whose USB pnpid
