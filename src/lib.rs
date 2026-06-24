@@ -20,4 +20,5 @@ pub mod daemon;
 pub mod error;
 pub mod grpc;
 pub mod tray;
+pub mod utils;
 pub mod ws;

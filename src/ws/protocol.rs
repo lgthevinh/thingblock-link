@@ -121,3 +121,21 @@ pub struct ListBoardsResult {
 pub struct CompileResult {
     pub artifact: Artifact,
 }
+
+/// The `compile` request's `options` payload — a deliberately tolerant subset of
+/// what the editor may send. Every field defaults and unknown keys are ignored,
+/// so an unexpected shape from the JS side degrades to a plain compile rather
+/// than a hard error. The exact contract with the firmware module's
+/// `getUploadConfig()` is still to be pinned down (see the design doc).
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CompileOptions {
+    /// Turn on arduino-cli verbose compile output.
+    pub verbose: bool,
+    /// gcc warning level: "none", "default", "more", "all".
+    pub warnings: Option<String>,
+    /// Paths to single library root directories.
+    pub libraries: Vec<String>,
+    /// Custom `key=value` build properties.
+    pub build_properties: Vec<String>,
+}

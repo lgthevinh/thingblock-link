@@ -1,10 +1,10 @@
 //! Per-connection state and the read→dispatch→write loop for one browser
 //! socket. The selected port (the helper-side `connect` session concept — the
 //! daemon itself is connectionless per-port) and the in-flight request ids live
-//! here; the latter is unused until M2 adds cancellable streams.
+//! here; the latter back `cancel{id}` for the long-running streams (`compile`).
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
@@ -14,19 +14,30 @@ use tracing::{debug, warn};
 
 use crate::bridge::{self, Responder};
 use crate::daemon::Daemon;
+use crate::error::Result;
+use crate::utils::tempdir::TempDir;
 use crate::ws::protocol::{Request, Response, ResponseBody};
 
 /// How many responses may queue toward the socket before backpressure applies.
 const RESPONSE_CHANNEL_CAPACITY: usize = 64;
+
+/// Cancellation tokens keyed by in-flight request id. Shared (`Arc<Mutex>`) so a
+/// spawned `compile` task can deregister itself while the read loop's `cancel`
+/// arm fires a token concurrently. Locks are brief and never held across `.await`.
+pub type InFlight = Arc<Mutex<HashMap<String, CancellationToken>>>;
 
 /// State for one browser WS connection.
 pub struct Session {
     daemon: Arc<Daemon>,
     /// The port chosen via `connect`, if any (opaque to the JS side).
     selected_port: Option<String>,
-    /// Cancellation tokens keyed by in-flight request id, for `cancel{id}`
-    /// (wired up in M2 alongside long-running streams).
-    in_flight: HashMap<String, CancellationToken>,
+    /// Cancellation tokens for in-flight long-running requests, for `cancel{id}`.
+    in_flight: InFlight,
+    /// Scratch space for materialized sketches and their compiled artifacts.
+    /// Lazily created on first `compile` and shared into compile tasks via `Arc`,
+    /// so it outlives any one task — an artifact must survive until a later
+    /// `upload` (M3) reads it, hence session scope rather than request scope.
+    temp_base: Option<Arc<TempDir>>,
 }
 
 impl Session {
@@ -34,13 +45,29 @@ impl Session {
         Self {
             daemon,
             selected_port: None,
-            in_flight: HashMap::new(),
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
+            temp_base: None,
         }
     }
 
     /// A clone of the daemon handle, for dispatch arms that need a gRPC client.
     pub fn daemon(&self) -> Arc<Daemon> {
         self.daemon.clone()
+    }
+
+    /// A clone of the in-flight handle, for spawned tasks to register/deregister.
+    pub fn in_flight(&self) -> InFlight {
+        self.in_flight.clone()
+    }
+
+    /// The session scratch dir, creating it on first use. Shared into compile
+    /// tasks; the directory is removed once the session and every in-flight
+    /// compile have dropped their `Arc`.
+    pub fn ensure_temp_base(&mut self) -> Result<Arc<TempDir>> {
+        if self.temp_base.is_none() {
+            self.temp_base = Some(Arc::new(TempDir::new("thingblock-link")?));
+        }
+        Ok(self.temp_base.clone().expect("temp_base set above"))
     }
 
     /// Store the port chosen via `connect` as this session's selected port.
@@ -88,6 +115,12 @@ impl Session {
                 // No binary/ping/pong handling in the protocol; ignore.
                 Message::Binary(_) | Message::Ping(_) | Message::Pong(_) => {}
             }
+        }
+
+        // Browser gone: cancel any in-flight compiles so detached tasks wind down
+        // (and release their `Arc<TempDir>`) rather than running to completion.
+        for (_, token) in self.in_flight.lock().expect("in_flight mutex").drain() {
+            token.cancel();
         }
 
         // Dropping `tx` ends the writer task, which closes the sink.

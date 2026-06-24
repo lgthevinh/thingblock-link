@@ -14,6 +14,7 @@
 use tonic::transport::Channel;
 
 pub mod board;
+pub mod compile;
 
 /// The tonic-generated code, mirroring the proto package hierarchy. Lints are
 /// silenced here — this is machine-generated and not ours to clean up.
