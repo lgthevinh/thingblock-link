@@ -19,6 +19,7 @@ pub mod bridge;
 pub mod daemon;
 pub mod error;
 pub mod grpc;
+pub mod resource;
 pub mod tray;
 pub mod utils;
 pub mod window;

@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
 use thingblock_link::daemon::Daemon;
+use thingblock_link::resource::ResourceRoot;
+use thingblock_link::utils::tempdir::TempDir;
 use thingblock_link::ws;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -39,13 +41,17 @@ async fn round_trip(socket: &mut Socket, request: &str) -> serde_json::Value {
 #[tokio::test]
 async fn connect_disconnect_round_trip() {
     let daemon = Arc::new(Daemon::start().await.expect("daemon should start"));
+    let resources = TempDir::new("thingblock-link-test-res").expect("temp resource dir");
+    let resource_root = Arc::new(ResourceRoot::new(resources.path()).expect("resource root"));
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .expect("bind ws listener");
     let addr = listener.local_addr().expect("listener address");
     tokio::spawn(async move {
-        ws::server::serve(listener, daemon).await.expect("serve");
+        ws::server::serve(listener, daemon, resource_root)
+            .await
+            .expect("serve");
     });
 
     let url = format!("ws://{addr}/");
