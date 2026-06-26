@@ -126,9 +126,18 @@ pub async fn dispatch(
             fqbn,
             options,
             source,
+            libs,
         } => {
             let opts: CompileOptions = serde_json::from_value(options)
                 .map_err(|e| Error::InvalidRequest(format!("compile options: {e}")))?;
+            // Resolve vendored lib references against the served root before
+            // committing the request: a bad ref is a boundary error, so fail fast
+            // (terminal `error{resource}`) rather than register a doomed task.
+            let resource_root = session.resource_root();
+            let lib_dirs = libs
+                .iter()
+                .map(|r| resource_root.resolve_lib_dir(&r.pack, &r.lib))
+                .collect::<Result<Vec<_>>>()?;
             let temp_base = session.ensure_temp_base()?;
             let in_flight = session.in_flight();
             let token = CancellationToken::new();
@@ -136,7 +145,7 @@ pub async fn dispatch(
                 .lock()
                 .expect("in_flight mutex")
                 .insert(id.to_string(), token.clone());
-            debug!(id, %fqbn, "compile: spawning");
+            debug!(id, %fqbn, libs = lib_dirs.len(), "compile: spawning");
 
             tokio::spawn(run_compile(
                 session.daemon(),
@@ -147,6 +156,7 @@ pub async fn dispatch(
                 fqbn,
                 opts,
                 source,
+                lib_dirs,
             ));
         }
         // `cancel`'s envelope `id` is the in-flight request's id (per the
@@ -206,10 +216,11 @@ async fn run_compile(
     fqbn: String,
     opts: CompileOptions,
     source: String,
+    lib_dirs: Vec<PathBuf>,
 ) {
     let id = responder.id().to_string();
     compile_stream(
-        &daemon, &responder, &temp_base, &token, &fqbn, &opts, &source,
+        &daemon, &responder, &temp_base, &token, &fqbn, &opts, &source, &lib_dirs,
     )
     .await;
     in_flight.lock().expect("in_flight mutex").remove(&id);
@@ -217,6 +228,7 @@ async fn run_compile(
 
 /// The cancellable compile pump. Materializes the sketch, opens the stream, and
 /// translates each event into a WS response until a terminal one is sent.
+#[allow(clippy::too_many_arguments)]
 async fn compile_stream(
     daemon: &Daemon,
     responder: &Responder,
@@ -225,6 +237,7 @@ async fn compile_stream(
     fqbn: &str,
     opts: &CompileOptions,
     source: &str,
+    lib_dirs: &[PathBuf],
 ) {
     let sketch_dir = match write_sketch(temp_base.path(), responder.id(), source) {
         Ok(dir) => dir,
@@ -232,7 +245,7 @@ async fn compile_stream(
     };
 
     let mut client = daemon.client();
-    let stream = match client.compile(fqbn, &sketch_dir, opts).await {
+    let stream = match client.compile(fqbn, &sketch_dir, opts, lib_dirs).await {
         Ok(stream) => stream,
         Err(e) => return responder.send_error(&e).await,
     };

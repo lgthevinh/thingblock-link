@@ -40,6 +40,37 @@ fn deserializes_upload_request_with_camelcase_fields() {
 }
 
 #[test]
+fn deserializes_compile_request_with_lib_refs() {
+    let raw = r#"{
+        "id":"3","type":"compile",
+        "payload":{"fqbn":"arduino:avr:uno","options":{},"source":"void setup(){}",
+                   "libs":[{"pack":"dht","lib":"lib/DHT"}]}
+    }"#;
+    let req: Request = serde_json::from_str(raw).expect("parse compile");
+    match req.body {
+        RequestBody::Compile { libs, .. } => {
+            assert_eq!(libs.len(), 1);
+            assert_eq!(libs[0].pack, "dht");
+            assert_eq!(libs[0].lib, "lib/DHT");
+        }
+        other => panic!("unexpected body: {other:?}"),
+    }
+}
+
+#[test]
+fn deserializes_compile_request_without_libs_defaults_empty() {
+    let raw = r#"{
+        "id":"4","type":"compile",
+        "payload":{"fqbn":"arduino:avr:uno","options":{},"source":"void setup(){}"}
+    }"#;
+    let req: Request = serde_json::from_str(raw).expect("parse compile without libs");
+    match req.body {
+        RequestBody::Compile { libs, .. } => assert!(libs.is_empty()),
+        other => panic!("unexpected body: {other:?}"),
+    }
+}
+
+#[test]
 fn serializes_result_envelope() {
     let resp = Response {
         id: "1".into(),

@@ -9,7 +9,7 @@
 //! root's identity: validate and canonicalize it once at startup (fail fast if
 //! absent) and hand its path to the route.
 //!
-//! Flow 2 (compile) will add `resolve_lib_dir`, turning a browser-supplied
+//! Flow 2 (compile): [`ResourceRoot::resolve_lib_dir`] turns a browser-supplied
 //! `{pack, lib}` reference into a local library directory the arduino-cli daemon
 //! reads in place. That consumer *is* a local process, so it uses the path
 //! directly — the asymmetry that makes Flow 1 an HTTP serve and Flow 2 a
@@ -53,5 +53,33 @@ impl ResourceRoot {
     /// The canonical root directory, for the static-file route to serve from.
     pub fn path(&self) -> &Path {
         &self.root
+    }
+
+    /// Resolve a browser-supplied `{pack, lib}` reference to a local library
+    /// directory under this root, for the arduino-cli daemon to read in place.
+    ///
+    /// The reference crosses the WS boundary, so it is untrusted: the path is
+    /// canonicalized and asserted to stay inside the root (defeating `../`
+    /// traversal that escapes it) and to be a directory. A missing or escaping
+    /// reference is an actionable [`Error::Resource`] naming the offending pack
+    /// and lib — never a silent miss.
+    pub fn resolve_lib_dir(&self, pack: &str, lib: &str) -> Result<PathBuf> {
+        let dir = self
+            .root
+            .join(pack)
+            .join(lib)
+            .canonicalize()
+            .map_err(|e| Error::Resource(format!("lib {pack}/{lib} is unreadable: {e}")))?;
+        if !dir.starts_with(&self.root) {
+            return Err(Error::Resource(format!(
+                "lib {pack}/{lib} escapes the resource root"
+            )));
+        }
+        if !dir.is_dir() {
+            return Err(Error::Resource(format!(
+                "lib {pack}/{lib} is not a directory"
+            )));
+        }
+        Ok(dir)
     }
 }
