@@ -1,2 +1,5 @@
 /target
 .agents/docs
+
+# Ignore the thingblock-resource directory
+/thingblock-resource

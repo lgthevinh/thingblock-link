@@ -27,6 +27,12 @@ pub enum Error {
     #[error("cancelled")]
     Cancelled,
 
+    /// A resource-root or pack/lib reference problem: the configured root is
+    /// invalid, or a referenced pack/lib is missing or escapes the root. Carries
+    /// an actionable message (the offending root, pack, or lib).
+    #[error("resource: {0}")]
+    Resource(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -39,6 +45,7 @@ impl Error {
             Error::Daemon(_) => "daemon",
             Error::Grpc(_) => "grpc",
             Error::Cancelled => "cancelled",
+            Error::Resource(_) => "resource",
             Error::Io(_) => "io",
         }
     }

@@ -15,6 +15,7 @@ use tracing::{debug, warn};
 use crate::bridge::{self, Responder};
 use crate::daemon::Daemon;
 use crate::error::Result;
+use crate::resource::ResourceRoot;
 use crate::utils::tempdir::TempDir;
 use crate::ws::protocol::{Request, Response, ResponseBody};
 
@@ -29,6 +30,9 @@ pub type InFlight = Arc<Mutex<HashMap<String, CancellationToken>>>;
 /// State for one browser WS connection.
 pub struct Session {
     daemon: Arc<Daemon>,
+    /// The served pack directory, shared so `compile` (M3+) can resolve a
+    /// `{pack, lib}` reference to a local library dir for the daemon.
+    resource_root: Arc<ResourceRoot>,
     /// The port chosen via `connect`, if any (opaque to the JS side).
     selected_port: Option<String>,
     /// Cancellation tokens for in-flight long-running requests, for `cancel{id}`.
@@ -41,9 +45,10 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(daemon: Arc<Daemon>) -> Self {
+    pub fn new(daemon: Arc<Daemon>, resource_root: Arc<ResourceRoot>) -> Self {
         Self {
             daemon,
+            resource_root,
             selected_port: None,
             in_flight: Arc::new(Mutex::new(HashMap::new())),
             temp_base: None,
@@ -53,6 +58,11 @@ impl Session {
     /// A clone of the daemon handle, for dispatch arms that need a gRPC client.
     pub fn daemon(&self) -> Arc<Daemon> {
         self.daemon.clone()
+    }
+
+    /// A clone of the resource-root handle, for `compile` lib resolution.
+    pub fn resource_root(&self) -> Arc<ResourceRoot> {
+        self.resource_root.clone()
     }
 
     /// A clone of the in-flight handle, for spawned tasks to register/deregister.

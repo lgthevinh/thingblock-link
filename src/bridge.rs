@@ -16,9 +16,10 @@ use tracing::{debug, warn};
 use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::grpc::compile::CompileEvent;
+use crate::grpc::upload::UploadEvent;
 use crate::utils::tempdir::TempDir;
 use crate::ws::protocol::{
-    CompileOptions, CompileResult, ListBoardsResult, RequestBody, Response, ResponseBody,
+    Artifact, CompileOptions, CompileResult, ListBoardsResult, RequestBody, Response, ResponseBody,
 };
 use crate::ws::session::{InFlight, Session};
 
@@ -125,9 +126,18 @@ pub async fn dispatch(
             fqbn,
             options,
             source,
+            libs,
         } => {
             let opts: CompileOptions = serde_json::from_value(options)
                 .map_err(|e| Error::InvalidRequest(format!("compile options: {e}")))?;
+            // Resolve vendored lib references against the served root before
+            // committing the request: a bad ref is a boundary error, so fail fast
+            // (terminal `error{resource}`) rather than register a doomed task.
+            let resource_root = session.resource_root();
+            let lib_dirs = libs
+                .iter()
+                .map(|r| resource_root.resolve_lib_dir(&r.pack, &r.lib))
+                .collect::<Result<Vec<_>>>()?;
             let temp_base = session.ensure_temp_base()?;
             let in_flight = session.in_flight();
             let token = CancellationToken::new();
@@ -135,7 +145,7 @@ pub async fn dispatch(
                 .lock()
                 .expect("in_flight mutex")
                 .insert(id.to_string(), token.clone());
-            debug!(id, %fqbn, "compile: spawning");
+            debug!(id, %fqbn, libs = lib_dirs.len(), "compile: spawning");
 
             tokio::spawn(run_compile(
                 session.daemon(),
@@ -146,6 +156,7 @@ pub async fn dispatch(
                 fqbn,
                 opts,
                 source,
+                lib_dirs,
             ));
         }
         // `cancel`'s envelope `id` is the in-flight request's id (per the
@@ -158,7 +169,33 @@ pub async fn dispatch(
                 debug!(id, "cancel: no in-flight request for id");
             }
         }
-        RequestBody::Upload { .. } => unimplemented("upload").await,
+        // Long-running and cancellable like `compile`: spawn so the read loop
+        // stays responsive, and own the terminal on the spawned task.
+        RequestBody::Upload {
+            fqbn,
+            port,
+            upload_speed,
+            artifact,
+        } => {
+            let in_flight = session.in_flight();
+            let token = CancellationToken::new();
+            in_flight
+                .lock()
+                .expect("in_flight mutex")
+                .insert(id.to_string(), token.clone());
+            debug!(id, %fqbn, %port, "upload: spawning");
+
+            tokio::spawn(run_upload(
+                session.daemon(),
+                responder.clone(),
+                in_flight,
+                token,
+                fqbn,
+                port,
+                upload_speed,
+                artifact,
+            ));
+        }
         RequestBody::MonitorOpen { .. } => unimplemented("monitorOpen").await,
         RequestBody::MonitorWrite { .. } => unimplemented("monitorWrite").await,
         RequestBody::MonitorClose {} => unimplemented("monitorClose").await,
@@ -179,10 +216,11 @@ async fn run_compile(
     fqbn: String,
     opts: CompileOptions,
     source: String,
+    lib_dirs: Vec<PathBuf>,
 ) {
     let id = responder.id().to_string();
     compile_stream(
-        &daemon, &responder, &temp_base, &token, &fqbn, &opts, &source,
+        &daemon, &responder, &temp_base, &token, &fqbn, &opts, &source, &lib_dirs,
     )
     .await;
     in_flight.lock().expect("in_flight mutex").remove(&id);
@@ -190,6 +228,7 @@ async fn run_compile(
 
 /// The cancellable compile pump. Materializes the sketch, opens the stream, and
 /// translates each event into a WS response until a terminal one is sent.
+#[allow(clippy::too_many_arguments)]
 async fn compile_stream(
     daemon: &Daemon,
     responder: &Responder,
@@ -198,6 +237,7 @@ async fn compile_stream(
     fqbn: &str,
     opts: &CompileOptions,
     source: &str,
+    lib_dirs: &[PathBuf],
 ) {
     let sketch_dir = match write_sketch(temp_base.path(), responder.id(), source) {
         Ok(dir) => dir,
@@ -205,7 +245,7 @@ async fn compile_stream(
     };
 
     let mut client = daemon.client();
-    let stream = match client.compile(fqbn, &sketch_dir, opts).await {
+    let stream = match client.compile(fqbn, &sketch_dir, opts, lib_dirs).await {
         Ok(stream) => stream,
         Err(e) => return responder.send_error(&e).await,
     };
@@ -243,6 +283,90 @@ async fn compile_stream(
                     return responder
                         .send_error(&Error::Daemon(
                             "compile ended without producing an artifact".into(),
+                        ))
+                        .await;
+                }
+            },
+        }
+    }
+}
+
+/// Drive one `upload` to its terminal reply, then deregister from `in_flight`.
+/// Owns every terminal for its request id (`result`, `error`, `error{cancelled}`).
+#[allow(clippy::too_many_arguments)]
+async fn run_upload(
+    daemon: Arc<Daemon>,
+    responder: Responder,
+    in_flight: InFlight,
+    token: CancellationToken,
+    fqbn: String,
+    port: String,
+    upload_speed: u32,
+    artifact: Artifact,
+) {
+    let id = responder.id().to_string();
+    upload_stream(
+        &daemon,
+        &responder,
+        &token,
+        &fqbn,
+        &port,
+        upload_speed,
+        &artifact,
+    )
+    .await;
+    in_flight.lock().expect("in_flight mutex").remove(&id);
+}
+
+/// The cancellable upload pump. Opens the stream and translates each event into a
+/// WS response until a terminal one is sent. Upload has no structured progress, so
+/// only `log` chunks flow before the terminal `result`.
+#[allow(clippy::too_many_arguments)]
+async fn upload_stream(
+    daemon: &Daemon,
+    responder: &Responder,
+    token: &CancellationToken,
+    fqbn: &str,
+    port: &str,
+    upload_speed: u32,
+    artifact: &Artifact,
+) {
+    let mut client = daemon.client();
+    let stream = match client
+        .upload(fqbn, &artifact.path, port, upload_speed)
+        .await
+    {
+        Ok(stream) => stream,
+        Err(e) => return responder.send_error(&e).await,
+    };
+    tokio::pin!(stream);
+
+    loop {
+        tokio::select! {
+            biased;
+            () = token.cancelled() => {
+                return responder
+                    .send(ResponseBody::Error {
+                        code: Error::Cancelled.code().into(),
+                        message: Error::Cancelled.to_string(),
+                    })
+                    .await;
+            }
+            item = stream.next() => match item {
+                Some(Ok(UploadEvent::Log(chunk))) => {
+                    responder.send(ResponseBody::Log { chunk }).await;
+                }
+                Some(Ok(UploadEvent::Done)) => {
+                    return responder
+                        .send(ResponseBody::Result(serde_json::json!({})))
+                        .await;
+                }
+                Some(Err(e)) => return responder.send_error(&e).await,
+                // Stream ended without a `Done`: the flash did not complete.
+                None => {
+                    return responder
+                        .send_error(&Error::Daemon(
+                            "upload ended without completing".into(),
                         ))
                         .await;
                 }

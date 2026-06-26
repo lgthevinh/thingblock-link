@@ -9,13 +9,17 @@ to the `arduino-cli` daemon. It is a *translating proxy* — it turns a minimal 
 the editor into arduino-cli gRPC calls and pumps streamed results back; it does not reimplement
 any arduino logic.
 
-This is a deliberately **separate repo** from the scratch-editor monorepo. The two share exactly
-one contract: the WebSocket `{id, type, payload}` envelope. Everything about the daemon stays
-hidden from the JS side.
+This is a deliberately **separate repo** from the scratch-editor monorepo. The two share a small,
+fixed set of contracts — the WebSocket `{id, type, payload}` envelope (the proxy face) and, once
+resource serving lands, the static `/resources/<pack>/…` URL layout the editor loads from (see
+`25-06_01.resource-serving.md`). Everything about the daemon stays hidden from the JS side.
 
 **Source of truth:** `.agents/docs/21-06_01.arduino-helper-design.md` owns the WS protocol, the
 crate layout, the dependency stack, and the milestone roadmap. Read it before doing design work;
 keep it authoritative and update it when the protocol or architecture changes.
+`.agents/docs/25-06_01.resource-serving.md` covers the planned addition beyond the proxy role —
+serving extension resource packs as static files, with `compile` resolving each pack's vendored
+`lib/` source from the served resource root (no lib bytes over the WS).
 
 ## Build, test, lint
 

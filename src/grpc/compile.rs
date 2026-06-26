@@ -37,15 +37,24 @@ impl Client {
         fqbn: &str,
         sketch_path: &Path,
         opts: &CompileOptions,
+        lib_dirs: &[PathBuf],
     ) -> Result<impl Stream<Item = Result<CompileEvent>>> {
         let instance = *self.instance();
+        // `library` (one entry per single-library root dir) carries both the
+        // editor-supplied paths and the resource-resolved vendored lib dirs.
+        let library = opts
+            .libraries
+            .iter()
+            .cloned()
+            .chain(lib_dirs.iter().map(|d| d.to_string_lossy().into_owned()))
+            .collect();
         let request = cli::CompileRequest {
             instance: Some(instance),
             fqbn: fqbn.to_string(),
             sketch_path: sketch_path.to_string_lossy().into_owned(),
             verbose: opts.verbose,
             warnings: opts.warnings.clone().unwrap_or_default(),
-            library: opts.libraries.clone(),
+            library,
             build_properties: opts.build_properties.clone(),
             ..Default::default()
         };
