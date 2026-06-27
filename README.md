@@ -24,10 +24,9 @@ self-contained process for the user to run.
 ## Status
 
 The WS pipe and the daemon handshake are in place, along with `listBoards`,
-`connect`, and `disconnect`. The remaining request types return
-`error {code: "unimplemented"}` until their milestone lands (compile → upload →
-monitor). Each row in the [reference](#websocket-protocol-reference) is tagged with
-its status.
+`connect`, `disconnect`, `compile`, `upload`, `cancel`, and the serial `monitor*`
+family. Every request type is now implemented. Each row in the
+[reference](#websocket-protocol-reference) is tagged with its status.
 
 ## Build, test, lint
 
@@ -94,12 +93,12 @@ reply (`result` or `error`). Field names are camelCase. Unsolicited helper messa
 | `listBoards` | `{ pnpid: string[] }` | `result { targets: ConnectionTarget[] }` | ✅ implemented |
 | `connect` | `{ port: string }` | `result {}` | ✅ implemented |
 | `disconnect` | `{}` | `result {}` | ✅ implemented |
-| `compile` | `{ fqbn, options, source }` | `result { artifact }` (after `log`/`progress`) | ☐ unimplemented |
-| `upload` | `{ fqbn, port, uploadSpeed, artifact }` | `result {}` (after `progress`) | ☐ unimplemented |
-| `monitorOpen` | `{ port, baudRate }` | `result {}` then async `monitorData` | ☐ unimplemented |
-| `monitorWrite` | `{ data }` | — | ☐ unimplemented |
-| `monitorClose` | `{}` | `result {}` | ☐ unimplemented |
-| `cancel` | `{}` (targets the request `id`) | `error { code: "cancelled" }` on the cancelled request | ☐ unimplemented |
+| `compile` | `{ fqbn, options, source, libs }` | `result { artifact }` (after `log`/`progress`) | ✅ implemented |
+| `upload` | `{ fqbn, port, uploadSpeed, artifact }` | `result {}` (after `log`) | ✅ implemented |
+| `monitorOpen` | `{ port, baudRate }` | `result {}` then async `monitorData` | ✅ implemented |
+| `monitorWrite` | `{ data }` | — | ✅ implemented |
+| `monitorClose` | `{}` | `result {}` | ✅ implemented |
+| `cancel` | `{}` (targets the request `id`) | `error { code: "cancelled" }` on the cancelled request | ✅ implemented |
 
 ### Helper → client
 
@@ -112,9 +111,9 @@ reply (`result` or `error`). Field names are camelCase. Unsolicited helper messa
 | `monitorData` | `{ data: string }` | inbound serial bytes for the monitor session |
 | `event` | request-specific object | unsolicited, e.g. `boardListChanged` |
 
-`error.code` is one of `invalidRequest`, `daemon`, `grpc`, `cancelled`, `io`, or
-`unimplemented`. A malformed envelope is answered with `error{invalidRequest}` and
-an empty `id` (there is nothing to correlate against).
+`error.code` is one of `invalidRequest`, `daemon`, `grpc`, `cancelled`, `resource`,
+or `io`. A malformed envelope is answered with `error{invalidRequest}` and an empty
+`id` (there is nothing to correlate against).
 
 ### Shared shapes
 

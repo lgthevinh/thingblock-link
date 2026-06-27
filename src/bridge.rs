@@ -16,12 +16,17 @@ use tracing::{debug, warn};
 use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::grpc::compile::CompileEvent;
+use crate::grpc::monitor::{MonitorCommand, MonitorEvent};
 use crate::grpc::upload::UploadEvent;
 use crate::utils::tempdir::TempDir;
 use crate::ws::protocol::{
     Artifact, CompileOptions, CompileResult, ListBoardsResult, RequestBody, Response, ResponseBody,
 };
-use crate::ws::session::{InFlight, Session};
+use crate::ws::session::{InFlight, MonitorSession, Session};
+
+/// How many outbound monitor commands (writes / close) may queue before
+/// backpressure applies. Serial writes from the editor are small and infrequent.
+const MONITOR_COMMAND_CAPACITY: usize = 32;
 
 /// Sends responses for one request back to the session's writer task, stamping
 /// each with the request `id`. Cloneable/`&`-shareable so a streaming handler can
@@ -77,16 +82,6 @@ pub async fn dispatch(
 ) -> Result<()> {
     let id = responder.id();
 
-    // Remaining arms land their real `ArduinoCoreService` translations in later
-    // milestones; until then they report themselves unimplemented.
-    let unimplemented = |what: &str| {
-        debug!(id, request = what, "unimplemented request");
-        responder.send(ResponseBody::Error {
-            code: "unimplemented".into(),
-            message: format!("{what} is not implemented yet"),
-        })
-    };
-
     match body {
         RequestBody::ListBoards { pnpid } => {
             let targets = session.daemon().client().board_list(&pnpid).await?;
@@ -113,7 +108,8 @@ pub async fn dispatch(
                 .await;
         }
         RequestBody::Disconnect {} => {
-            // M4 closes any open monitor stream here before clearing the port.
+            // Close any open monitor (releasing the port) before clearing it.
+            session.close_monitor().await;
             debug!(id, "disconnect: cleared selected port");
             session.clear_port();
             responder
@@ -196,12 +192,114 @@ pub async fn dispatch(
                 artifact,
             ));
         }
-        RequestBody::MonitorOpen { .. } => unimplemented("monitorOpen").await,
-        RequestBody::MonitorWrite { .. } => unimplemented("monitorWrite").await,
-        RequestBody::MonitorClose {} => unimplemented("monitorClose").await,
+        // Open the bidirectional monitor stream, confirm the port opened, then keep
+        // a pump task streaming `monitorData` under *this* (the open) request's id.
+        // The session owns the live monitor; `monitorWrite`/`monitorClose` reach it
+        // by id-independent session state, not by their own ids.
+        RequestBody::MonitorOpen { port, baud_rate } => {
+            if session.has_monitor() {
+                return Err(Error::InvalidRequest(
+                    "a monitor is already open; close it before opening another".into(),
+                ));
+            }
+            open_monitor(session, responder, &port, baud_rate).await?;
+        }
+        // Push serial bytes into the open monitor's outbound stream. No reply (per
+        // the protocol). A dropped channel means the monitor just closed.
+        RequestBody::MonitorWrite { data } => {
+            let Some(cmd_tx) = session.monitor_cmd_tx() else {
+                return Err(Error::InvalidRequest(
+                    "monitorWrite with no monitor open".into(),
+                ));
+            };
+            if cmd_tx
+                .send(MonitorCommand::Write(data.into_bytes()))
+                .await
+                .is_err()
+            {
+                warn!(id, "monitorWrite dropped: monitor stream closed");
+            }
+        }
+        // Close the open monitor and acknowledge. Idempotent: closing when none is
+        // open still returns `result {}`.
+        RequestBody::MonitorClose {} => {
+            session.close_monitor().await;
+            debug!(id, "monitorClose: monitor closed");
+            responder
+                .send(ResponseBody::Result(serde_json::json!({})))
+                .await;
+        }
     }
 
     Ok(())
+}
+
+/// Open the monitor: dial the bidi stream, await the leading `Opened` event, and on
+/// success reply `result {}`, install the live monitor on the session, and spawn the
+/// pump that streams `monitorData` (and a terminal `error` on stream death) under
+/// the open request's id.
+async fn open_monitor(
+    session: &mut Session,
+    responder: &Responder,
+    port: &str,
+    baud_rate: u32,
+) -> Result<()> {
+    let id = responder.id();
+    let (cmd_tx, cmd_rx) = mpsc::channel::<MonitorCommand>(MONITOR_COMMAND_CAPACITY);
+
+    let mut client = session.daemon().client();
+    // Heap-pin so the stream can move into the pump task after the open handshake.
+    let mut stream = Box::pin(client.monitor(port, baud_rate, cmd_rx).await?);
+
+    // The first event confirms the port opened (or reports why it didn't).
+    match stream.next().await {
+        Some(Ok(MonitorEvent::Opened)) => {}
+        Some(Ok(MonitorEvent::Error(message))) => return Err(Error::Daemon(message)),
+        Some(Ok(MonitorEvent::Data(_))) => {
+            return Err(Error::Daemon(
+                "monitor streamed data before confirming the port opened".into(),
+            ));
+        }
+        Some(Err(e)) => return Err(e),
+        None => return Err(Error::Daemon("monitor stream closed before opening".into())),
+    }
+
+    debug!(id, %port, baud_rate, "monitorOpen: port opened");
+    responder
+        .send(ResponseBody::Result(serde_json::json!({})))
+        .await;
+
+    // Detach the pump: it owns the (heap-pinned) stream for the monitor's life,
+    // emitting `monitorData` until a close, an error, or the stream ending.
+    let pump_responder = responder.clone();
+    let task = tokio::spawn(async move {
+        monitor_pump(stream, &pump_responder).await;
+    });
+    session.set_monitor(MonitorSession { cmd_tx, task });
+    Ok(())
+}
+
+/// Pump inbound monitor events to the browser as `monitorData`. A port error
+/// surfaces as a terminal `error` under the open request's id; a clean stream end
+/// (after `monitorClose`) is silent, the close's own `result {}` having replied.
+async fn monitor_pump(
+    mut stream: impl futures::Stream<Item = Result<MonitorEvent>> + Unpin,
+    responder: &Responder,
+) {
+    while let Some(event) = stream.next().await {
+        match event {
+            Ok(MonitorEvent::Data(data)) => {
+                responder.send(ResponseBody::MonitorData { data }).await;
+            }
+            // A second `Opened` is not expected once the port is up; ignore it
+            // rather than treat a benign duplicate as fatal.
+            Ok(MonitorEvent::Opened) => {}
+            Ok(MonitorEvent::Error(message)) => {
+                return responder.send_error(&Error::Daemon(message)).await;
+            }
+            Err(e) => return responder.send_error(&e).await,
+        }
+    }
 }
 
 /// Drive one `compile` to its terminal reply, then deregister from `in_flight`.
