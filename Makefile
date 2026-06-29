@@ -17,6 +17,11 @@ CARGO_XWIN ?= cargo xwin
 # arduino-cli daemon output. Override: `make dev RUST_LOG=thingblock_link=trace`.
 RUST_LOG ?= thingblock_link=debug,arduino_cli_daemon=debug
 
+# Resource pack root for `make dev`/`make run`. The packaged app finds this beside
+# the binary, but in dev the exe lives under target/, so point at the in-repo
+# folder. Override: `make dev RESOURCE_ROOT=/path/to/packs`.
+RESOURCE_ROOT ?= ./thingblock-resource
+
 # Release target triples, keyed to the bundled arduino-cli dirs.
 TARGET_LINUX   := x86_64-unknown-linux-gnu
 TARGET_MACOS   := aarch64-apple-darwin
@@ -32,7 +37,7 @@ help: ## List available targets
 		| awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 dev run: ## Run the helper locally (debug build + debug logs)
-	RUST_BACKTRACE=1 RUST_LOG=$(RUST_LOG) $(CARGO) run
+	RUST_BACKTRACE=1 RUST_LOG=$(RUST_LOG) $(CARGO) run -- --resource-root $(RESOURCE_ROOT)
 
 build: ## Native release build
 	$(CARGO) build --release

@@ -3,4 +3,6 @@
 
 # Arduino build files
 /data
+
+# Ignore the thingblock-resource directory
 /thingblock-resource

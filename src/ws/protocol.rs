@@ -37,6 +37,11 @@ pub enum RequestBody {
         fqbn: String,
         options: serde_json::Value,
         source: String,
+        /// References to vendored library directories under the served resource
+        /// root, resolved in place by the daemon (no bytes cross the WS). Absent
+        /// for clients that don't vendor libs, hence `default`.
+        #[serde(default)]
+        libs: Vec<LibRef>,
     },
     Upload {
         fqbn: String,
@@ -89,6 +94,17 @@ pub enum ResponseBody {
     MonitorData { data: String },
     /// Unsolicited event, e.g. `boardListChanged` from `BoardListWatch`.
     Event(serde_json::Value),
+}
+
+/// A reference to a vendored library *directory* inside an installed pack under
+/// the served resource root. `lib` is a directory path relative to the pack; the
+/// helper resolves it to a local path the arduino-cli daemon reads in place. No
+/// version is carried — the root is single-version (see the resource-serving doc).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibRef {
+    pub pack: String,
+    pub lib: String,
 }
 
 /// A compiled binary the editor can hand back to `upload`.

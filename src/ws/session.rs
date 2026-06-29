@@ -9,12 +9,15 @@ use std::sync::{Arc, Mutex};
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::bridge::{self, Responder};
 use crate::daemon::Daemon;
 use crate::error::Result;
+use crate::grpc::monitor::MonitorCommand;
+use crate::resource::ResourceRoot;
 use crate::utils::tempdir::TempDir;
 use crate::ws::protocol::{Request, Response, ResponseBody};
 
@@ -26,9 +29,22 @@ const RESPONSE_CHANNEL_CAPACITY: usize = 64;
 /// arm fires a token concurrently. Locks are brief and never held across `.await`.
 pub type InFlight = Arc<Mutex<HashMap<String, CancellationToken>>>;
 
+/// An open serial monitor. Lives in the [`Session`] (not a detached task) because
+/// it spans three WS requests: `monitorOpen` creates it, `monitorWrite` pushes
+/// bytes through `cmd_tx`, and `monitorClose` (or teardown) ends it. `task` is the
+/// pump that translates inbound serial into `monitorData` under the open request's
+/// id; dropping `cmd_tx` ends the outbound stream, which winds the pump down.
+pub struct MonitorSession {
+    pub cmd_tx: mpsc::Sender<MonitorCommand>,
+    pub task: JoinHandle<()>,
+}
+
 /// State for one browser WS connection.
 pub struct Session {
     daemon: Arc<Daemon>,
+    /// The served pack directory, shared so `compile` (M3+) can resolve a
+    /// `{pack, lib}` reference to a local library dir for the daemon.
+    resource_root: Arc<ResourceRoot>,
     /// The port chosen via `connect`, if any (opaque to the JS side).
     selected_port: Option<String>,
     /// Cancellation tokens for in-flight long-running requests, for `cancel{id}`.
@@ -38,21 +54,30 @@ pub struct Session {
     /// so it outlives any one task — an artifact must survive until a later
     /// `upload` (M3) reads it, hence session scope rather than request scope.
     temp_base: Option<Arc<TempDir>>,
+    /// The open serial monitor, if any. At most one per session (one board).
+    monitor: Option<MonitorSession>,
 }
 
 impl Session {
-    pub fn new(daemon: Arc<Daemon>) -> Self {
+    pub fn new(daemon: Arc<Daemon>, resource_root: Arc<ResourceRoot>) -> Self {
         Self {
             daemon,
+            resource_root,
             selected_port: None,
             in_flight: Arc::new(Mutex::new(HashMap::new())),
             temp_base: None,
+            monitor: None,
         }
     }
 
     /// A clone of the daemon handle, for dispatch arms that need a gRPC client.
     pub fn daemon(&self) -> Arc<Daemon> {
         self.daemon.clone()
+    }
+
+    /// A clone of the resource-root handle, for `compile` lib resolution.
+    pub fn resource_root(&self) -> Arc<ResourceRoot> {
+        self.resource_root.clone()
     }
 
     /// A clone of the in-flight handle, for spawned tasks to register/deregister.
@@ -78,6 +103,35 @@ impl Session {
     /// Clear the selected port (via `disconnect`).
     pub fn clear_port(&mut self) {
         self.selected_port = None;
+    }
+
+    /// Whether a serial monitor is currently open.
+    pub fn has_monitor(&self) -> bool {
+        self.monitor.is_some()
+    }
+
+    /// Install the open monitor (via `monitorOpen`). Replaces any prior one — the
+    /// bridge rejects a re-open while one is live, so this is only set on a fresh
+    /// open.
+    pub fn set_monitor(&mut self, monitor: MonitorSession) {
+        self.monitor = Some(monitor);
+    }
+
+    /// A clone of the open monitor's command sender, for `monitorWrite`. `None` if
+    /// no monitor is open.
+    pub fn monitor_cmd_tx(&self) -> Option<mpsc::Sender<MonitorCommand>> {
+        self.monitor.as_ref().map(|m| m.cmd_tx.clone())
+    }
+
+    /// Close the open monitor, if any: ask the daemon to close the port gracefully,
+    /// then drop `cmd_tx` so the outbound stream ends and the pump task winds down.
+    /// Best-effort — a closed channel or finished task is fine.
+    pub async fn close_monitor(&mut self) {
+        if let Some(monitor) = self.monitor.take() {
+            let _ = monitor.cmd_tx.send(MonitorCommand::Close).await;
+            drop(monitor.cmd_tx);
+            let _ = monitor.task.await;
+        }
     }
 
     /// Drive the connection until the socket closes: a writer task pumps queued
@@ -117,8 +171,10 @@ impl Session {
             }
         }
 
-        // Browser gone: cancel any in-flight compiles so detached tasks wind down
-        // (and release their `Arc<TempDir>`) rather than running to completion.
+        // Browser gone: close any open monitor (releasing the port) and cancel any
+        // in-flight compiles so detached tasks wind down (and release their
+        // `Arc<TempDir>`) rather than running to completion.
+        self.close_monitor().await;
         for (_, token) in self.in_flight.lock().expect("in_flight mutex").drain() {
             token.cancel();
         }
