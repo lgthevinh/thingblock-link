@@ -1,2 +1,6 @@
 /target
 .agents/docs
+
+# Arduino build files
+/data
+/thingblock-resource
