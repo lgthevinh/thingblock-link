@@ -28,6 +28,12 @@ struct Args {
     /// against the in-repo folder during development.
     #[arg(long)]
     resource_root: Option<PathBuf>,
+
+    /// Path to the `arduino-cli` binary to run. Packaged builds pass the binary
+    /// bundled beside the host app; when omitted, the in-tree
+    /// `arduino-cli-binaries/` copy is used so `cargo run` works during development.
+    #[arg(long)]
+    arduino_cli: Option<PathBuf>,
 }
 
 /// The packaged default: a `thingblock-resource` directory laid down beside the
@@ -58,5 +64,5 @@ fn main() -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    tray::run(runtime, args.port, resource_root)
+    tray::run(runtime, args.port, resource_root, args.arduino_cli)
 }

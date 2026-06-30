@@ -63,7 +63,7 @@ async fn serve_resources(file_rel: &str, contents: &str) -> (SocketAddr, TempDir
     fs::write(&file, contents).expect("write pack file");
 
     let resource_root = Arc::new(ResourceRoot::new(resources.path()).expect("resource root"));
-    let daemon = Arc::new(Daemon::start().await.expect("daemon should start"));
+    let daemon = Arc::new(Daemon::start(None).await.expect("daemon should start"));
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await

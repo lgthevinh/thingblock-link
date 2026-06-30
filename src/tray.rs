@@ -95,7 +95,7 @@ struct Tray {
 /// Run the helper: spawn the daemon + WS server on `runtime`, then drive the
 /// tray's event loop on this (main) thread. Diverges — the process exits from
 /// within the loop on Quit.
-pub fn run(runtime: Runtime, port: u16, resource_root: PathBuf) -> ! {
+pub fn run(runtime: Runtime, port: u16, resource_root: PathBuf, cli_path: Option<PathBuf>) -> ! {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
@@ -111,7 +111,7 @@ pub fn run(runtime: Runtime, port: u16, resource_root: PathBuf) -> ! {
 
     // Start the daemon + WS server + telemetry poller; status flows back through
     // the proxy.
-    runtime.spawn(run_services(port, resource_root, proxy));
+    runtime.spawn(run_services(port, resource_root, cli_path, proxy));
 
     // The tray is built on `Init` (macOS requires icon creation after the loop
     // starts); `runtime` lives in an Option so Quit can take it exactly once.
@@ -200,7 +200,12 @@ fn shutdown(runtime: &mut Option<Runtime>, control_flow: &mut ControlFlow) {
 /// Spawn + own the daemon and serve the editor over WS, reporting lifecycle to
 /// the tray. Terminal states (`Failed`) are reported and the task returns; the
 /// process keeps running so the tray stays usable for Quit.
-async fn run_services(port: u16, resource_root: PathBuf, proxy: EventLoopProxy<UserEvent>) {
+async fn run_services(
+    port: u16,
+    resource_root: PathBuf,
+    cli_path: Option<PathBuf>,
+    proxy: EventLoopProxy<UserEvent>,
+) {
     let _ = proxy.send_event(UserEvent::Status(Status::Starting));
 
     // Validate the resource root up front (fail fast, like the daemon): a missing
@@ -215,7 +220,7 @@ async fn run_services(port: u16, resource_root: PathBuf, proxy: EventLoopProxy<U
         }
     };
 
-    let daemon = match Daemon::start().await {
+    let daemon = match Daemon::start(cli_path).await {
         Ok(daemon) => Arc::new(daemon),
         Err(e) => {
             error!(error = %e, "daemon failed to start");

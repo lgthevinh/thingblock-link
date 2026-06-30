@@ -6,7 +6,7 @@ use thingblock_link::daemon::Daemon;
 
 #[tokio::test]
 async fn starts_daemon_and_completes_handshake() {
-    let daemon = Daemon::start()
+    let daemon = Daemon::start(None)
         .await
         .expect("daemon should spawn and complete Create/Init handshake");
 
