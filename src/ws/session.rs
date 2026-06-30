@@ -7,9 +7,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::ws::{Message, WebSocket};
+use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
@@ -19,10 +21,16 @@ use crate::error::Result;
 use crate::grpc::monitor::MonitorCommand;
 use crate::resource::ResourceRoot;
 use crate::utils::tempdir::TempDir;
+use crate::ws::batch::{is_batchable, push_coalesced};
 use crate::ws::protocol::{Request, Response, ResponseBody};
 
 /// How many responses may queue toward the socket before backpressure applies.
 const RESPONSE_CHANNEL_CAPACITY: usize = 64;
+
+/// How long streamed-text chunks (`log` / `monitorData`) accumulate before the
+/// writer flushes a coalesced frame. Caps a flood of tiny chunks at one frame per
+/// window per stream; terminal/progress messages bypass this and flush promptly.
+const BATCH_COOLDOWN: Duration = Duration::from_millis(100);
 
 /// Cancellation tokens keyed by in-flight request id. Shared (`Arc<Mutex>`) so a
 /// spawned `compile` task can deregister itself while the read loop's `cancel`
@@ -141,15 +149,51 @@ impl Session {
         let (tx, mut rx) = mpsc::channel::<Response>(RESPONSE_CHANNEL_CAPACITY);
 
         let writer = tokio::spawn(async move {
-            while let Some(response) = rx.recv().await {
-                match serde_json::to_string(&response) {
-                    Ok(json) => {
-                        if sink.send(Message::Text(json.into())).await.is_err() {
+            // Streamed-text chunks accumulate here over a `BATCH_COOLDOWN` window,
+            // coalesced per `id`; `flush_at` arms the trailing-edge flush. Other
+            // messages flush this buffer first (to keep order) then send promptly.
+            let mut buf: Vec<Response> = Vec::new();
+            let mut flush_at: Option<Instant> = None;
+
+            loop {
+                // Disabled (pends forever) until a chunk arms `flush_at`.
+                let tick = async {
+                    match flush_at {
+                        Some(at) => tokio::time::sleep_until(at).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                };
+
+                tokio::select! {
+                    biased;
+                    () = tick => {
+                        if !flush(&mut sink, &mut buf).await {
                             break; // socket closed
                         }
+                        flush_at = None;
                     }
-                    // Our own response types always serialize; treat as a bug.
-                    Err(e) => warn!(error = %e, "failed to serialize response"),
+                    message = rx.recv() => match message {
+                        // All senders dropped (session teardown): flush and finish.
+                        None => {
+                            flush(&mut sink, &mut buf).await;
+                            break;
+                        }
+                        Some(response) if is_batchable(&response.body) => {
+                            push_coalesced(&mut buf, response);
+                            flush_at.get_or_insert_with(|| Instant::now() + BATCH_COOLDOWN);
+                        }
+                        // Terminal/progress/event: preserve order by flushing the
+                        // buffered streamed text first, then send this promptly.
+                        Some(response) => {
+                            if !flush(&mut sink, &mut buf).await {
+                                break;
+                            }
+                            flush_at = None;
+                            if !send_response(&mut sink, &response).await {
+                                break;
+                            }
+                        }
+                    },
                 }
             }
         });
@@ -215,4 +259,28 @@ impl Session {
                 .await;
         }
     }
+}
+
+/// Serialize and send one response to the socket. Returns `false` when the socket
+/// is closed (the caller should stop writing). A serialization failure is a bug in
+/// our own response types — logged and skipped, but the socket stays usable.
+async fn send_response(sink: &mut SplitSink<WebSocket, Message>, response: &Response) -> bool {
+    match serde_json::to_string(response) {
+        Ok(json) => sink.send(Message::Text(json.into())).await.is_ok(),
+        Err(e) => {
+            warn!(error = %e, "failed to serialize response");
+            true
+        }
+    }
+}
+
+/// Drain the coalesced buffer to the socket in order. Returns `false` (stop) if the
+/// socket closes mid-flush, leaving any unsent responses dropped with it.
+async fn flush(sink: &mut SplitSink<WebSocket, Message>, buf: &mut Vec<Response>) -> bool {
+    for response in buf.drain(..) {
+        if !send_response(sink, &response).await {
+            return false;
+        }
+    }
+    true
 }

@@ -2,8 +2,9 @@
 //!
 //! [`protocol`] defines the `{id, type, payload}` envelope (the cross-repo
 //! contract), [`server`] accepts connections, and [`session`] holds per-socket
-//! state.
+//! state. [`batch`] coalesces streamed-text frames on the writer path.
 
+pub mod batch;
 pub mod protocol;
 pub mod server;
 pub mod session;
