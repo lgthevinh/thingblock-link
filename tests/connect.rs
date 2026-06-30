@@ -40,7 +40,7 @@ async fn round_trip(socket: &mut Socket, request: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn connect_disconnect_round_trip() {
-    let daemon = Arc::new(Daemon::start().await.expect("daemon should start"));
+    let daemon = Arc::new(Daemon::start(None).await.expect("daemon should start"));
     let resources = TempDir::new("thingblock-link-test-res").expect("temp resource dir");
     let resource_root = Arc::new(ResourceRoot::new(resources.path()).expect("resource root"));
 

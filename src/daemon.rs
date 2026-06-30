@@ -31,11 +31,11 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    /// Locate the bundled `arduino-cli`, spawn `arduino-cli daemon` on a free
-    /// port, dial the gRPC channel, and run `Create` + `Init` to get a ready
-    /// instance id.
-    pub async fn start() -> Result<Self> {
-        let cli_path = bundled_cli_path();
+    /// Locate `arduino-cli` (`cli_path` override, else the dev default beside
+    /// the crate), spawn `arduino-cli daemon` on a free port, dial the gRPC
+    /// channel, and run `Create` + `Init` to get a ready instance id.
+    pub async fn start(cli_path: Option<PathBuf>) -> Result<Self> {
+        let cli_path = resolve_cli_path(cli_path);
         let port = pick_free_port()?;
         info!(binary = %cli_path.display(), port, "starting arduino-cli daemon");
 
@@ -81,10 +81,15 @@ impl Daemon {
     }
 }
 
-/// Path to the bundled `arduino-cli` for the current platform.
-///
-/// Resolved relative to the crate manifest for now; distribution-time resolution
-/// (the binary sitting next to the packaged helper) is an M5 concern.
+/// The arduino-cli to run: the caller's explicit override when packaged (the
+/// binary bundled beside the host app), else the dev default below.
+fn resolve_cli_path(override_path: Option<PathBuf>) -> PathBuf {
+    override_path.unwrap_or_else(bundled_cli_path)
+}
+
+/// Dev default: the arduino-cli vendored in the crate's `arduino-cli-binaries/`,
+/// so `cargo run` works in-tree. Packaged builds pass an explicit path instead
+/// (see [`resolve_cli_path`]).
 fn bundled_cli_path() -> PathBuf {
     let (dir, exe) = if cfg!(target_os = "windows") {
         ("arduino-cli_win_64bit", "arduino-cli.exe")
@@ -180,4 +185,20 @@ async fn handshake(channel: Channel) -> Result<cli::Instance> {
     }
 
     Ok(instance)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn override_path_is_used_verbatim() {
+        let path = PathBuf::from("/opt/thingblock/arduino-cli");
+        assert_eq!(resolve_cli_path(Some(path.clone())), path);
+    }
+
+    #[test]
+    fn no_override_falls_back_to_bundled() {
+        assert_eq!(resolve_cli_path(None), bundled_cli_path());
+    }
 }

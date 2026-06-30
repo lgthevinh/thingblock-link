@@ -18,7 +18,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 #[tokio::test]
 async fn ws_round_trip_list_boards_returns_result() {
-    let daemon = Arc::new(Daemon::start().await.expect("daemon should start"));
+    let daemon = Arc::new(Daemon::start(None).await.expect("daemon should start"));
     let resources = TempDir::new("thingblock-link-test-res").expect("temp resource dir");
     let resource_root = Arc::new(ResourceRoot::new(resources.path()).expect("resource root"));
 
