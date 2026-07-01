@@ -1,6 +1,6 @@
 # thingblock-link
 
-The local native **helper** that backs the scratch-editor firmware module's
+The local native **helper** that backs the thingblock-editor firmware module's
 local-helper compile/flash mode (the "arduino-helper"). It is a single
 long-running Rust binary with two faces:
 

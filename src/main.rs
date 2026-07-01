@@ -15,7 +15,7 @@ const DEFAULT_WS_PORT: u16 = 3030;
 #[derive(Parser)]
 #[command(
     name = "thingblock-link",
-    about = "Local arduino-cli helper for the scratch-editor"
+    about = "Local arduino-cli helper for the thingblock-editor"
 )]
 struct Args {
     /// TCP port for the WebSocket server (bound on localhost).

@@ -1,4 +1,4 @@
-//! thingblock-link — the local native helper that backs the scratch-editor
+//! thingblock-link — the local native helper that backs the thingblock-editor
 //! firmware module's local-helper compile/flash mode.
 //!
 //! Two faces: a WebSocket server for the browser/editor, and a gRPC client to

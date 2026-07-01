@@ -21,7 +21,7 @@ RUST_LOG ?= thingblock_link=debug,arduino_cli_daemon=debug
 # the binary, but in dev the exe lives under target/, so point at the resource
 # package's dist build (run `npm run build` in that package first). Override:
 # `make dev RESOURCE_ROOT=/path/to/packs`.
-RESOURCE_ROOT ?= ../scratch-editor/packages/thingblock-resource/dist/thingblock-resource
+RESOURCE_ROOT ?= ../thingblock-editor/packages/thingblock-resource/dist/thingblock-resource
 
 # Release target triples, keyed to the bundled arduino-cli dirs.
 TARGET_LINUX   := x86_64-unknown-linux-gnu

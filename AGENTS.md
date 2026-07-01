@@ -3,13 +3,13 @@
 ## What this is
 
 `thingblock-link` is the local native **helper** (the "arduino-helper") that backs the
-scratch-editor firmware module's local-helper compile/flash mode. It is a single long-running
+thingblock-editor firmware module's local-helper compile/flash mode. It is a single long-running
 Rust binary with two faces: a **WebSocket server** for the browser/editor, and a **gRPC client**
 to the `arduino-cli` daemon. It is a *translating proxy* — it turns a minimal JSON envelope from
 the editor into arduino-cli gRPC calls and pumps streamed results back; it does not reimplement
 any arduino logic.
 
-This is a deliberately **separate repo** from the scratch-editor monorepo. The two share a small,
+This is a deliberately **separate repo** from the thingblock-editor monorepo. The two share a small,
 fixed set of contracts — the WebSocket `{id, type, payload}` envelope (the proxy face) and, once
 resource serving lands, the static `/resources/<pack>/…` URL layout the editor loads from (see
 `25-06_01.resource-serving.md`). Everything about the daemon stays hidden from the JS side.
@@ -55,7 +55,7 @@ Use these unless the user asks otherwise:
 ## Conventions
 
 - **Commits** follow [Conventional Commits](https://www.conventionalcommits.org/). (This is a
-  convention here, not a hook-enforced rule as in the scratch-editor monorepo.)
+  convention here, not a hook-enforced rule as in the thingblock-editor monorepo.)
 - Keep `Cargo.toml` sections (`dependencies`, etc.) in alphabetical order.
 - Design docs live in `.agents/docs/`.
 

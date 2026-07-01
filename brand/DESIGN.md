@@ -1,10 +1,10 @@
 # ThingBlock — Brand & Design Reference
 
 Design assets and tokens for the **thingblock-link** helper's native UI (tray icon, status
-window, about dialog). These are exported from the `scratch-editor` editor so the helper's
+window, about dialog). These are exported from the `thingblock-editor` editor so the helper's
 native surface stays visually consistent with the browser editor it backs.
 
-> **Source of truth.** The canonical assets live in `scratch-editor`:
+> **Source of truth.** The canonical assets live in `thingblock-editor`:
 > - Wordmark: `packages/scratch-gui/src/components/menu-bar/thingblock-logo.jsx`
 > - App glyph: `packages/scratch-gui/static/favicon.svg`
 >
